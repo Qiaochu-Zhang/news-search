@@ -34,7 +34,8 @@ sites:
   - name: h2_view
     category: 氢
     home_url: https://www.h2-view.com/news/all-news/
-    rss_url: https://www.h2-view.com/news/all-news/feed/
+    # 原 RSS 被 Cloudflare 403 封锁，改用 Google News RSS 聚合 h2-view.com 的文章
+    rss_url: https://news.google.com/rss/search?q=site:h2-view.com&hl=en&gl=US&ceid=US:en
     type: rss
 
   - name: hydrogen_tech_world
@@ -63,9 +64,9 @@ sites:
 
   - name: netease_pv
     category: 光伏
-    home_url: https://www.163.com/dy/media/T1632726077385.html
-    rss_url: https://rsshub.app/163/dy2/T1632726077385
-    type: rss
+    # 桌面版 JS 渲染无法解析，RSSHub 返回非法 XML；改用移动端静态 HTML
+    home_url: https://m.163.com/news/sub/T1632726077385.html
+    type: html
 
 
   # ===== HTML列表页 =====

@@ -58,12 +58,11 @@ CSV 输出到 `carbon_spider/outputs/daily_news_YYYYMMDD.csv`，手动复制到 
 | batteries_international | 电池 | 正常 |
 | pv_magazine | 光伏 | 正常 |
 | ammonia_energy | 氨 | 正常 |
-| h2_view | 氢 | RSS 格式异常（返回 0 条） |
+| h2_view | 氢 | 正常（Google News RSS 聚合） |
 | hydrogen_tech_world | 氢 | 正常 |
 | batteries_news | 电池 | 正常 |
 | bnef_press | 新能源 | 正常 |
 | techreview_climate | 新能源 | 正常 |
-| netease_pv | 光伏 | RSS 格式异常（返回 0 条） |
 
 ### HTML 列表页（8 个）
 
@@ -77,6 +76,7 @@ CSV 输出到 `carbon_spider/outputs/daily_news_YYYYMMDD.csv`，手动复制到 
 | xinhua_tech | 综合科技 | `crawl_xinhua_tech` |
 | inen_solar | 光伏 | `crawl_inen_solar` |
 | renewablesnow | 新能源 | `crawl_renewablesnow` |
+| netease_pv | 光伏 | `crawl_netease_pv` |
 
 ---
 
@@ -170,10 +170,10 @@ def crawl_new_site(site: dict) -> list[dict]:
 
 ---
 
-## 已知问题
+## 历史问题及修复记录
 
-| 站点 | 问题 | 原因 |
-|------|------|------|
-| h2_view | RSS 返回 0 条 | feed XML 格式不规范，feedparser 无法解析 |
-| netease_pv | RSS 返回 0 条 | RSSHub 返回的 XML 含非法字符 |
-| xinhua_tech | 部分文章无发布时间 | 页面为 JS 渲染，静态 HTML 中日期字段缺失 |
+| 站点 | 问题 | 根因 | 修复方案 | 修复后 |
+|------|------|------|----------|--------|
+| h2_view | RSS 返回 0 条 | 站点套 Cloudflare，RSS 和 HTML 均返回 403 | 改用 Google News RSS（`site:h2-view.com`）作为数据源 | 正常，可获取 ~100 条 |
+| netease_pv | RSS 返回 0 条 | RSSHub 返回含非法字符的 XML，feedparser 解析失败；桌面版页面 JS 渲染 | 改抓移动端静态 HTML（`m.163.com/news/sub/...`），结构规整 | 正常，可获取 ~20 条 |
+| xinhua_tech | 部分文章无发布时间 | 原逻辑从父元素文本中正则匹配日期，但日期不在文本里 | 改从 URL 路径提取（`/tech/YYYYMMDD/<hash>/c.html`） | 90% 文章有日期（无日期为外链文章）|

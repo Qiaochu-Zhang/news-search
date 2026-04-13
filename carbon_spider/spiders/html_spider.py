@@ -232,8 +232,8 @@ def crawl_sciencenet(site: dict) -> list[dict]:
 def crawl_xinhua_tech(site: dict) -> list[dict]:
     """
     新华网科技频道 (www.news.cn/tech)
-    列表页通常为 JSON 接口或 JS 渲染，此处先尝试静态 HTML。
-    如果静态 HTML 抓不到内容，则尝试备用接口。
+    文章链接格式：/tech/YYYYMMDD/<hash>/c.html
+    日期直接从 URL 路径中提取，不依赖页面文本。
     """
     resp = _get(site["home_url"])
     if resp is None:
@@ -242,30 +242,89 @@ def crawl_xinhua_tech(site: dict) -> list[dict]:
     soup = _soup(resp)
     base = "https://www.news.cn"
     articles = []
+    seen = set()
 
-    # 新华网科技页常见结构：<li> 内含 <a>
-    for a in soup.find_all("a", href=re.compile(r"news\.cn")):
+    for a in soup.find_all("a", href=True):
         title = a.get_text(strip=True)
         href = a["href"]
         if not title or len(title) < 5:
             continue
         if not href.startswith("http"):
             href = urljoin(base, href)
+        if href in seen:
+            continue
+        seen.add(href)
 
-        parent = a.parent
-        date_str = _extract_date_from_text(parent.get_text() if parent else "")
+        # 从 URL 路径提取日期：/tech/20260413/<hash>/c.html
+        m = re.search(r"/(\d{8})/", href)
+        date_str = (
+            f"{m.group(1)[:4]}-{m.group(1)[4:6]}-{m.group(1)[6:]}"
+            if m else None
+        )
+
         articles.append(_make_article(site, title, href, date_str))
 
-    # 去重
-    seen = set()
-    unique = []
-    for art in articles:
-        if art["url"] not in seen:
-            seen.add(art["url"])
-            unique.append(art)
+    logger.info("[%s] 获取到 %d 篇文章", site["name"], len(articles))
+    return articles
 
-    logger.info("[%s] 获取到 %d 篇文章", site["name"], len(unique))
-    return unique
+
+@register("netease_pv")
+def crawl_netease_pv(site: dict) -> list[dict]:
+    """
+    网易号·知光谷（光伏）移动端列表页 (m.163.com)
+    桌面版 JS 渲染无法直接解析；移动端为静态 HTML，结构清晰：
+      <li class="single-picture-news js-click-news">
+        <a href="//m.163.com/news/article/<ID>.html">
+          <p class="news-title">标题</p>
+          <div class="public-time font">2026-04-01</div>
+        </a>
+      </li>
+    """
+    mobile_headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) "
+            "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1"
+        ),
+        "Accept-Language": "zh-CN,zh;q=0.9",
+    }
+    try:
+        resp = requests.get(
+            site["home_url"],
+            headers=mobile_headers,
+            timeout=REQUEST_TIMEOUT,
+        )
+        resp.raise_for_status()
+        resp.encoding = "utf-8"
+    except requests.RequestException as e:
+        logger.error("请求失败 [%s]: %s", site["home_url"], e)
+        return []
+
+    soup = _soup(resp)
+    articles = []
+
+    for li in soup.find_all("li", class_=re.compile(r"js-click-news")):
+        a = li.find("a", href=True)
+        if not a:
+            continue
+
+        title_tag = li.find("p", class_="news-title")
+        title = title_tag.get_text(strip=True) if title_tag else a.get_text(strip=True)
+        if not title:
+            continue
+
+        href = a["href"]
+        if href.startswith("//"):
+            href = "https:" + href
+        elif not href.startswith("http"):
+            href = "https://m.163.com" + href
+
+        date_tag = li.find(class_=re.compile(r"public.?time|time|date", re.I))
+        date_str = date_tag.get_text(strip=True) if date_tag else None
+
+        articles.append(_make_article(site, title, href, date_str))
+
+    logger.info("[%s] 获取到 %d 篇文章", site["name"], len(articles))
+    return articles
 
 
 @register("inen_solar")
