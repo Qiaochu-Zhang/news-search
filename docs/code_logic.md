@@ -11,7 +11,7 @@ python3 main.py --no-content        # 跳过正文，约60秒完成
 python3 main.py --no-content --all-dates  # 调试用，不过滤日期
 ```
 
-**数据源：** 19 个站点，10 RSS + 9 HTML，覆盖电池/储能/光伏/氢/氨/核电/科技分类。
+**数据源：** 26 个站点，14 RSS + 12 HTML，覆盖电池/储能/光伏/氢/氨/核电/科技/风电分类。
 
 **输出：** `carbon_spider/outputs/daily_news_YYYYMMDD.csv`，其中 YYYYMMDD 是**新闻日期（昨天）**，而非运行日期。手动复制到 `daily-news/` 后 push。
 
@@ -57,6 +57,10 @@ python3 main.py --no-content --all-dates  # 调试用，不过滤日期
 | batteries_news | RSS | 低频，最新约 2 天前 |
 | bnef_press | RSS | 低频，最新约 1 月前 |
 | techreview_climate | RSS | 标准 RSS，每日 1 篇左右 |
+| electrek | RSS | 新能源/EV，日更活跃，约 10+ 篇 |
+| scitechdaily | RSS | 综合科技，日更约 15 篇 |
+| interesting_engineering | RSS | 综合科技 |
+| perovskite_info | RSS | Google News RSS 聚合（直接访问需登录）；约 1 天延迟 |
 | netease_pv | HTML | 移动端 m.163.com；频道 T1632726077385（知光谷）更新慢，约2周延迟 |
 | cnnpn_domestic/international | HTML | 核电国内/国外；`ul li` 结构，日期在 class=date 标签，约一半文章无日期标签 |
 | cpnn_energy/cpnn_tech | HTML | 链接为相对路径 `./YYYYMM/tID.html`，**必须用 `resp.url` 做 base**，否则 404；日期从 URL 提取 |
@@ -64,6 +68,9 @@ python3 main.py --no-content --all-dates  # 调试用，不过滤日期
 | xinhua_tech | HTML | 只保留 `/tech/YYYYMMDD/<hash>/c.html` 格式文章 URL；日期从 URL 提取 |
 | inen_solar | HTML | 标题在 `<h5 a>`（非图片链接）；日期为相对时间 `<i>X天前/X小时前</i>`，运行时实时计算；文章 URL 格式 `/html/solar-\d+\.shtml` |
 | renewablesnow | HTML | `/news/` 页；React 渲染无 h 标签，**标题从 `img alt` 提取**；日期从容器文本英文月份匹配；URL 需含数字 ID |
+| solarbe_tech | HTML | 索比光伏网 `news.solarbe.com`；URL 格式 `/YYYYMM/DD/ID.html`，日期从 URL 提取 |
+| tgs4c | HTML | 4C Offshore `tgs4c.com/news/`；URL 格式 `slug-nidXXXX.html`；标题过滤空链接和 "Read more"；日期格式 "DD Month YYYY" |
+| china_nengyuan | HTML | 中国能源网 `china-nengyuan.com/news/`；URL 格式 `/news/ID.html`；**列表页无日期**，全部 pass-through |
 
 **设计原则：** 简单优先，每站点独立处理，出错不影响整体。
 
