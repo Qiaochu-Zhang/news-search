@@ -523,3 +523,130 @@ def crawl_renewablesnow(site: dict) -> list[dict]:
 
     logger.info("[%s] 获取到 %d 篇文章", site["name"], len(articles))
     return articles
+
+
+@register("solarbe_tech")
+def crawl_solarbe(site: dict) -> list[dict]:
+    """
+    索比光伏网 (news.solarbe.com)
+    文章 URL 格式：/YYYYMM/DD/ID.html，日期直接从 URL 提取。
+    """
+    resp = _get(site["home_url"])
+    if resp is None:
+        return []
+
+    soup = _soup(resp)
+    articles = []
+    seen: set = set()
+
+    # 文章 URL 格式：/YYYYMM/DD/ID.html，如 /202604/13/388495.html
+    article_url_re = re.compile(r"news\.solarbe\.com/(\d{4})(\d{2})/(\d{2})/(\d+)\.html")
+
+    for a in soup.find_all("a", href=True):
+        href = a["href"]
+        if not href.startswith("http"):
+            href = urljoin("https://news.solarbe.com", href)
+        m = article_url_re.search(href)
+        if not m or href in seen:
+            continue
+        title = a.get_text(strip=True)
+        if not title:
+            continue
+        seen.add(href)
+        date_str = f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
+        articles.append(_make_article(site, title, href, date_str))
+
+    logger.info("[%s] 获取到 %d 篇文章", site["name"], len(articles))
+    return articles
+
+
+@register("tgs4c")
+def crawl_tgs4c(site: dict) -> list[dict]:
+    """
+    同济顾问 tgs4c.com/news/
+    文章 URL 格式：/news/<slug>-nidXXXX.html，日期在页面文本中格式为 "13 April 2026"。
+    """
+    resp = _get(site["home_url"])
+    if resp is None:
+        return []
+
+    soup = _soup(resp)
+    base = "https://www.tgs4c.com"
+    articles = []
+    seen: set = set()
+
+    article_url_re = re.compile(r"/news/[^/]+-nid\d+\.html$")
+    month_map = {
+        "January": "01", "February": "02", "March": "03", "April": "04",
+        "May": "05", "June": "06", "July": "07", "August": "08",
+        "September": "09", "October": "10", "November": "11", "December": "12",
+    }
+    # 匹配 "13 April 2026" 格式
+    date_pat = re.compile(
+        r"(\d{1,2})\s+(January|February|March|April|May|June|July|August"
+        r"|September|October|November|December)\s+(\d{4})"
+    )
+
+    for a in soup.find_all("a", href=article_url_re):
+        href = a["href"]
+        if not href.startswith("http"):
+            href = urljoin(base, href)
+        if href in seen:
+            continue
+        title = a.get_text(strip=True)
+        if not title or title in ("Read more", "Share"):
+            continue
+        seen.add(href)
+
+        # 从父容器中找日期文本
+        date_str = None
+        node = a.parent
+        for _ in range(8):
+            if node is None:
+                break
+            text = node.get_text(strip=True)
+            dm = date_pat.search(text)
+            if dm:
+                dd = dm.group(1).zfill(2)
+                mm = month_map.get(dm.group(2), "01")
+                yyyy = dm.group(3)
+                date_str = f"{yyyy}-{mm}-{dd}"
+                break
+            node = node.parent
+
+        articles.append(_make_article(site, title, href, date_str))
+
+    logger.info("[%s] 获取到 %d 篇文章", site["name"], len(articles))
+    return articles
+
+
+@register("china_nengyuan")
+def crawl_china_nengyuan(site: dict) -> list[dict]:
+    """
+    中国能源网 (china-nengyuan.com/news/)
+    文章 URL 格式：/news/ID.html，列表页无日期（日期仅在文章页内），
+    publish_time 留空，main.py 的 is_yesterday(None) = True 会保留。
+    """
+    resp = _get(site["home_url"])
+    if resp is None:
+        return []
+
+    soup = _soup(resp)
+    base = "http://www.china-nengyuan.com"
+    articles = []
+    seen: set = set()
+
+    article_url_re = re.compile(r"^/news/\d+\.html$")
+
+    for a in soup.find_all("a", href=article_url_re):
+        href = urljoin(base, a["href"])
+        if href in seen:
+            continue
+        title = a.get_text(strip=True)
+        if not title:
+            continue
+        seen.add(href)
+        articles.append(_make_article(site, title, href, None))
+
+    logger.info("[%s] 获取到 %d 篇文章", site["name"], len(articles))
+    return articles

@@ -62,6 +62,31 @@ sites:
     rss_url: https://www.technologyreview.com/topic/climate-change/feed/
     type: rss
 
+  - name: electrek
+    category: 新能源
+    home_url: https://electrek.co/
+    rss_url: https://electrek.co/feed/
+    type: rss
+
+  - name: scitechdaily
+    category: 综合科技
+    home_url: https://scitechdaily.com/
+    rss_url: https://scitechdaily.com/feed/
+    type: rss
+
+  - name: interesting_engineering
+    category: 综合科技
+    home_url: https://interestingengineering.com/
+    rss_url: https://interestingengineering.com/feed
+    type: rss
+
+  - name: perovskite_info
+    category: 光伏
+    home_url: https://www.perovskite-info.com/news
+    # 直接访问需登录，改用 Google News RSS 聚合
+    rss_url: https://news.google.com/rss/search?q=site:perovskite-info.com&hl=en&gl=US&ceid=US:en
+    type: rss
+
   - name: netease_pv
     category: 光伏
     # 桌面版 JS 渲染无法解析，RSSHub 返回非法 XML；改用移动端静态 HTML
@@ -108,4 +133,19 @@ sites:
   - name: renewablesnow
     category: 新能源
     home_url: https://renewablesnow.com/news/
+    type: html
+
+  - name: solarbe_tech
+    category: 光伏
+    home_url: https://news.solarbe.com/
+    type: html
+
+  - name: tgs4c
+    category: 综合科技
+    home_url: https://www.tgs4c.com/news/
+    type: html
+
+  - name: china_nengyuan
+    category: 新能源
+    home_url: http://www.china-nengyuan.com/news/
     type: html

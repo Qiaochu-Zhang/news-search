@@ -87,6 +87,53 @@
 
 ---
 
+## 批次三：新增数据源（当前版本）
+
+### 新增 RSS 站点（仅加 yaml，无需写解析函数）
+
+| 站点 | RSS URL | 说明 |
+|------|---------|------|
+| electrek | `https://electrek.co/feed/` | 新能源/EV，日更约 10+ 篇 |
+| scitechdaily | `https://scitechdaily.com/feed/` | 综合科技，日更约 15 篇 |
+| interesting_engineering | `https://interestingengineering.com/feed` | 综合科技 |
+| perovskite_info | Google News RSS `q=site:perovskite-info.com` | 直接访问需登录，改 Google News 聚合；约 1 天延迟 |
+
+### 新增 HTML 站点
+
+#### solarbe_tech（索比光伏网）
+
+**URL：** `https://news.solarbe.com/`
+**解析：** 文章 URL 格式 `/YYYYMM/DD/ID.html`，日期直接从 URL 提取。
+**效果：** 约 100+ 篇/次，日更活跃。
+
+#### tgs4c（4C Offshore）
+
+**URL：** `https://www.tgs4c.com/news/`
+**解析：** 文章 URL 格式 `/news/<slug>-nidXXXX.html`；标题从 `a` 文本取（过滤空链接和 "Read more"）；日期从父容器文本匹配 `DD Month YYYY` 格式（英文月份）。
+**效果：** 约 3 篇/次（低频站，离岸风电专业站）。
+
+#### china_nengyuan（中国能源网）
+
+**URL：** `http://www.china-nengyuan.com/news/`
+**解析：** 文章 URL 格式 `/news/ID.html`；列表页无日期，`publish_time = None`，`is_yesterday(None)` 返回 True 全部保留。
+**效果：** 约 170 篇/次，全部无日期（pass-through）。
+
+---
+
+## 未能接入的数据源（记录备查）
+
+| 来源 | 问题 | 说明 |
+|------|------|------|
+| WeChat 公众号（7 个） | 需登录 | 中粉固态电池/风电世界/起点钠电/能源学人/钙钛矿工厂/钙钛矿学习xx平台/地热能在线，微信公众号无公开 RSS，需登录后抓取 |
+| esplaza.com.cn | Connection refused | 网站无法访问 |
+| volta.foundation/battery-news | 月更 RSS | 更新频率约每月一篇，无法提供每日新闻 |
+| batterytechonline.com | HTTP 403 | 网站屏蔽爬虫；Google News RSS 延迟且覆盖不全 |
+| supplychaindigital.com | HTTP 403 | 网站屏蔽爬虫；内容以供应链综合为主，能源相关性低 |
+| nachrichten.idw-online.de | 德语无 RSS | 德语站，无结构化 RSS，内容为学术新闻 |
+| smartbrief BCI | 邮件通讯 | 无可抓取的公开列表页，内容为邮件推送 |
+
+---
+
 ## 站点局限（无法解决，记录备查）
 
 | 站点 | 问题 | 说明 |
@@ -99,3 +146,6 @@
 | bnef_press | 低频 | 月报为主，最新约 1 月前 |
 | netease_pv | 频道偏科研 | 知光谷频道更新缓慢，约 2 周延迟 |
 | renewablesnow | 文章页 403 | 列表页可抓（URL 正确），文章页 WAF 拦截 Python requests，浏览器直接打开正常 |
+| perovskite_info | Google News 延迟 | 最新文章通常落后 1 天，昨日新闻偶有 0 |
+| tgs4c | 低频 | 离岸风电专业站，约 3 篇/日 |
+| china_nengyuan | 无日期 | 列表页不含日期，全部 pass-through，含历史旧文章 |
