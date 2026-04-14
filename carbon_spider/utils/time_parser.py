@@ -70,3 +70,16 @@ def is_today(dt: Optional[datetime], today: Optional[datetime] = None) -> bool:
     if today is None:
         today = datetime.now(timezone.utc)
     return dt.date() == today.date()
+
+
+def is_yesterday(dt: Optional[datetime], today: Optional[datetime] = None) -> bool:
+    """
+    判断 datetime 是否为昨天（按 UTC 日期比较）。
+    dt 为 None 时返回 True（不过滤无时间文章）。
+    """
+    if dt is None:
+        return True
+    if today is None:
+        today = datetime.now(timezone.utc)
+    from datetime import timedelta
+    return dt.date() == (today - timedelta(days=1)).date()

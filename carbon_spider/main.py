@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from spiders.rss_spider import crawl_rss
 from spiders.html_spider import crawl_html
-from utils.time_parser import is_today
+from utils.time_parser import is_yesterday
 
 # ── 日志配置 ────────────────────────────────────────────────
 logging.basicConfig(
@@ -70,10 +70,13 @@ def load_sites(path: Path) -> list[dict]:
 
 
 def run(fetch_body: bool = False, all_dates: bool = False) -> Path:
-    today = datetime.now(timezone.utc)
-    date_str = today.strftime("%Y%m%d")
+    now = datetime.now(timezone.utc)
+    from datetime import timedelta
+    yesterday = now - timedelta(days=1)
+    # 文件以新闻日期（昨天）命名，方便归档查阅
+    date_str = yesterday.strftime("%Y%m%d")
 
-    logger.info("====== 开始抓取 %s ======", date_str)
+    logger.info("====== 开始抓取 %s（昨日新闻）======", date_str)
 
     sites = load_sites(SITES_YAML)
     all_articles: list[dict] = []
@@ -85,9 +88,9 @@ def run(fetch_body: bool = False, all_dates: bool = False) -> Path:
         else:
             articles = crawl_html(site)
 
-        # 日期过滤
+        # 日期过滤：保留昨天的文章（无日期的也保留，避免漏抓）
         if not all_dates:
-            articles = [a for a in articles if is_today(a["publish_time"], today)]
+            articles = [a for a in articles if is_yesterday(a["publish_time"], now)]
 
         all_articles.extend(articles)
 

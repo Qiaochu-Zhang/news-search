@@ -102,10 +102,10 @@ sites:
 
   - name: inen_solar
     category: 光伏
-    home_url: https://solar.in-en.com/SolarTech/
+    home_url: https://solar.in-en.com/news/
     type: html
 
   - name: renewablesnow
     category: 新能源
-    home_url: https://renewablesnow.com/company-news/products-technology/
+    home_url: https://renewablesnow.com/news/
     type: html

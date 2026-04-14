@@ -225,33 +225,31 @@ def crawl_cnnpn(site: dict) -> list[dict]:
 def crawl_cpnn(site: dict) -> list[dict]:
     """
     中国核能行业协会 (cpnn.com.cn)
-    列表页结构示例：
-      <div class="news-item">
-        <a href="/news/xny/xxxxx.html">标题</a>
-        <span class="date">2024-04-12</span>
-      </div>
+    文章链接为相对路径 ./YYYYMM/tYYYYMMDD_ID.html，
+    必须以页面 URL（resp.url）为 base 解析，否则 404。
     """
     resp = _get(site["home_url"])
     if resp is None:
         return []
 
     soup = _soup(resp)
-    base = "https://cpnn.com.cn"
+    page_url = resp.url  # 用响应的实际 URL 作为 base，保证相对路径正确解析
     articles = []
 
-    for item in soup.select(".news-item, .list-item, .article-item, li"):
-        a = item.find("a", href=True)
-        if not a:
+    # 文章 URL 格式：.../YYYYMM/tYYYYMMDD_ID.html
+    article_url_re = re.compile(r"/\d{6}/t\d{8}_\d+\.html$")
+
+    for a in soup.find_all("a", href=True):
+        href = urljoin(page_url, a["href"])
+        if not article_url_re.search(href):
             continue
         title = a.get_text(strip=True)
-        href = urljoin(base, a["href"])
-        if not title or "cpnn.com.cn" not in href:
+        if not title:
             continue
 
-        date_tag = item.find(class_=re.compile(r"date|time|pub", re.I))
-        date_str = date_tag.get_text(strip=True) if date_tag else None
-        if not date_str:
-            date_str = _extract_date_from_text(item.get_text())
+        # 日期从 URL 路径提取：/202604/t20260413_...
+        m = re.search(r"/(\d{4})(\d{2})/t(\d{4})(\d{2})(\d{2})_", href)
+        date_str = f"{m.group(3)}-{m.group(4)}-{m.group(5)}" if m else None
 
         articles.append(_make_article(site, title, href, date_str))
 
@@ -262,29 +260,30 @@ def crawl_cpnn(site: dict) -> list[dict]:
 @register("sciencenet")
 def crawl_sciencenet(site: dict) -> list[dict]:
     """
-    科学网新闻 (news.sciencenet.cn)
-    列表页结构示例：
-      <div class="news-item">
-        <a href="http://news.sciencenet.cn/htmlnews/...">标题</a>
-        <span>2024-04-12</span>
-      </div>
+    科学网新闻 (news.sciencenet.cn/morenews-V-1.aspx)
+    正文列表使用相对链接 /htmlnews/YYYY/M/ID.shtm，日期在父 <tr> 文本里
+    格式：标题 + 作者 + "2026/4/14 10:14:39"。
+    侧栏"一周排行"用绝对链接但无日期，需排除。
     """
     resp = _get(site["home_url"])
     if resp is None:
         return []
 
     soup = _soup(resp)
+    base = "https://news.sciencenet.cn"
     articles = []
 
-    for a in soup.find_all("a", href=re.compile(r"sciencenet\.cn/htmlnews/")):
+    # 只找相对路径链接（正文列表），绝对路径是侧栏排行
+    for a in soup.find_all("a", href=re.compile(r"^/htmlnews/\d{4}/")):
         title = a.get_text(strip=True)
-        href = a["href"]
         if not title:
             continue
 
-        # 日期通常在同级或父级元素
-        parent = a.parent
-        date_str = _extract_date_from_text(parent.get_text() if parent else "")
+        href = urljoin(base, a["href"])
+
+        # 日期在父 <tr> 文本中，格式 "2026/4/14 10:14:39"
+        tr = a.find_parent("tr")
+        date_str = _extract_date_from_text(tr.get_text(strip=True)) if tr else None
 
         articles.append(_make_article(site, title, href, date_str))
 
@@ -308,6 +307,9 @@ def crawl_xinhua_tech(site: dict) -> list[dict]:
     articles = []
     seen = set()
 
+    # 文章 URL 格式：/tech/YYYYMMDD/<hash>/c.html，排除栏目索引页
+    article_url_re = re.compile(r"/tech/\d{8}/[0-9a-f]+/c\.html$")
+
     for a in soup.find_all("a", href=True):
         title = a.get_text(strip=True)
         href = a["href"]
@@ -316,6 +318,9 @@ def crawl_xinhua_tech(site: dict) -> list[dict]:
         if not href.startswith("http"):
             href = urljoin(base, href)
         if href in seen:
+            continue
+        # 只保留文章页，跳过栏目/专题索引页
+        if not article_url_re.search(href):
             continue
         seen.add(href)
 
@@ -394,12 +399,18 @@ def crawl_netease_pv(site: dict) -> list[dict]:
 @register("inen_solar")
 def crawl_inen_solar(site: dict) -> list[dict]:
     """
-    国际能源网-光伏 (solar.in-en.com)
-    列表页示例：
-      <ul class="news-list">
-        <li><span class="date">04-12</span><a href="/xxxxx.html">标题</a></li>
-      </ul>
+    国际能源网-光伏 (solar.in-en.com/news/)
+    列表页结构：
+      <li>
+        <div class="listTxt">
+          <h5><a href="/html/solar-XXXXXX.shtml">标题</a></h5>
+          <div class="prompt"><i>1天前</i> 或 <i>MM-DD</i></div>
+        </div>
+      </li>
+    日期为相对时间（"1天前"/"X小时前"）或 MM-DD 格式，需特殊处理。
     """
+    import datetime as _dt
+
     resp = _get(site["home_url"])
     if resp is None:
         return []
@@ -407,28 +418,54 @@ def crawl_inen_solar(site: dict) -> list[dict]:
     soup = _soup(resp)
     base = "https://solar.in-en.com"
     articles = []
-    today_year = __import__("datetime").date.today().year
+    now = _dt.datetime.now(_dt.timezone.utc)
+    today_year = now.year
 
-    # 文章链接格式：/html/solar-XXXXXX.html
-    article_url_re = re.compile(r"/html/solar-\d+\.html$")
+    article_url_re = re.compile(r"/html/solar-\d+\.shtml$")
+    seen: set = set()
 
     for li in soup.find_all("li"):
-        a = li.find("a", href=True)
+        # 标题从 h5 内的 <a> 取，避免取到图片链接
+        h5 = li.find("h5")
+        a = h5.find("a", href=True) if h5 else None
+        if not a:
+            # 兜底：找任意匹配文章 URL 的 <a>
+            a = li.find("a", href=article_url_re)
         if not a:
             continue
+
         title = a.get_text(strip=True)
         href = urljoin(base, a["href"])
-        # 只保留符合文章 URL 格式的链接，过滤首页/栏目/外站链接
-        if not article_url_re.search(href):
+        if not article_url_re.search(href) or href in seen:
             continue
+        seen.add(href)
 
-        date_tag = li.find(class_=re.compile(r"date|time", re.I))
-        raw_date = date_tag.get_text(strip=True) if date_tag else ""
-        # 补全年份：如 "04-12" → "2024-04-12"
-        if re.match(r"^\d{2}-\d{2}$", raw_date):
-            raw_date = f"{today_year}-{raw_date}"
+        # 日期：优先从 <i> 标签取相对时间，其次找 class=date/time
+        raw_date: Optional[str] = None
+        i_tag = li.find("i")
+        if i_tag:
+            raw = i_tag.get_text(strip=True)
+            m_hours = re.match(r"(\d+)小时前", raw)
+            m_days  = re.match(r"(\d+)天前", raw)
+            m_mmdd  = re.match(r"(\d{2})-(\d{2})$", raw)
+            if m_hours:
+                delta = _dt.timedelta(hours=int(m_hours.group(1)))
+                pub = now - delta
+                raw_date = pub.strftime("%Y-%m-%d")
+            elif m_days:
+                delta = _dt.timedelta(days=int(m_days.group(1)))
+                pub = now - delta
+                raw_date = pub.strftime("%Y-%m-%d")
+            elif m_mmdd:
+                raw_date = f"{today_year}-{m_mmdd.group(1)}-{m_mmdd.group(2)}"
+            else:
+                raw_date = _extract_date_from_text(raw)
+        if not raw_date:
+            date_tag = li.find(class_=re.compile(r"date|time", re.I))
+            if date_tag:
+                raw_date = _extract_date_from_text(date_tag.get_text(strip=True))
 
-        articles.append(_make_article(site, title, href, raw_date or None))
+        articles.append(_make_article(site, title, href, raw_date))
 
     logger.info("[%s] 获取到 %d 篇文章", site["name"], len(articles))
     return articles
@@ -437,12 +474,9 @@ def crawl_inen_solar(site: dict) -> list[dict]:
 @register("renewablesnow")
 def crawl_renewablesnow(site: dict) -> list[dict]:
     """
-    RenewablesNow (renewablesnow.com)
-    列表页示例：
-      <article class="post">
-        <h2><a href="https://renewablesnow.com/news/...">标题</a></h2>
-        <time datetime="2024-04-12">April 12, 2024</time>
-      </article>
+    RenewablesNow (renewablesnow.com/news/)
+    页面为 React 渲染的静态 HTML；文章链接格式 /news/<slug>-<id>/。
+    标题从图片 alt 属性提取（页面内无独立 h 标签），日期从容器文本正则提取。
     """
     resp = _get(site["home_url"])
     if resp is None:
@@ -450,25 +484,40 @@ def crawl_renewablesnow(site: dict) -> list[dict]:
 
     soup = _soup(resp)
     articles = []
+    seen: set = set()
 
-    # 文章链接必须在 /news/ 路径下，排除 /sectors/ /companies/ /events/ 等导航页
-    news_url_re = re.compile(r"renewablesnow\.com/news/[^/]+/?\s*$")
+    # 文章 URL：/news/<slug>-<数字ID>/  排除 /news/wind/ 等栏目页
+    article_url_re = re.compile(r"renewablesnow\.com/news/[^/]+-\d+/?$")
 
-    for article in soup.find_all(["article", "div"], class_=re.compile(r"post|item|news", re.I)):
-        a = article.find("a", href=news_url_re)
-        if not a:
-            continue
-
-        title = a.get_text(strip=True)
+    for a in soup.find_all("a", href=article_url_re):
         href = a["href"]
-        if not title or not href.startswith("http"):
+        if href in seen:
             continue
 
-        time_tag = article.find("time")
-        if time_tag:
-            date_str = time_tag.get("datetime") or time_tag.get_text(strip=True)
-        else:
-            date_str = _extract_date_from_text(article.get_text())
+        # 用 img alt 作为标题——页面里文章图片的 alt 就是标题全文
+        img = a.find("img")
+        title = img["alt"].strip() if img and img.get("alt") else ""
+        if not title:
+            continue  # 跳过纯图标/装饰性链接
+
+        seen.add(href)
+
+        # 从父容器文本中提取英文日期，如 "Apr 13, 2026"
+        node = a.parent
+        date_str = None
+        for _ in range(10):
+            text = node.get_text(strip=True) if node else ""
+            if len(text) > 60:
+                date_str = _extract_date_from_text(text)
+                if not date_str:
+                    # 英文月份格式
+                    m = re.search(
+                        r"(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d+,\s+\d{4}",
+                        text,
+                    )
+                    date_str = m.group(0) if m else None
+                break
+            node = node.parent if node else None
 
         articles.append(_make_article(site, title, href, date_str))
 
