@@ -17,6 +17,63 @@ logger = logging.getLogger(__name__)
 
 REQUEST_TIMEOUT = 15  # 秒
 
+# ── 垃圾标题过滤 ────────────────────────────────────────────
+# 导航栏目、品牌名、功能入口等不属于新闻正文的标题
+
+_JUNK_TITLE_SET = frozenset({
+    # 通用站点功能链接
+    "广告服务", "版权声明", "我们的服务", "联系我们", "关于我们", "免责声明",
+    "投稿须知", "招聘信息", "网站地图", "友情链接", "返回顶部", "返回首页", "首页",
+    # 通用频道/栏目导航
+    "电力", "新能源", "油气", "煤炭", "企业", "地方", "科技", "国际",
+    "人事", "观点", "观察", "财经", "政策", "市场", "行情", "技术", "项目",
+    # 国际能源网系列品牌导航
+    "国际能源网", "国际新能源网", "国际太阳能光伏网", "国际电力网", "国际风电网",
+    "国际储能网", "国际节能环保网", "国际煤炭网", "国际石油网", "国际燃气网",
+    "国际氢能网", "国际充换电网",
+    # 能源网服务入口
+    "能源商城", "能直播", "能课堂", "能源商圈", "能源会展",
+    # 光伏子栏目
+    "光伏资讯", "光伏政策", "光伏人物", "光伏企业", "光伏产品", "光伏会展",
+    "光伏统计", "光伏电池组件", "光伏系统工程", "光伏逆变器", "光伏原材料及辅料",
+    "光伏零部件", "光热发电", "光伏设备", "分布式电站", "光伏财经", "光伏项目",
+    "光伏行情", "光伏技术", "首页光伏资讯",
+    # 英文导航 / 功能入口
+    "Advanced search", "Sectors", "Regions", "Projects", "Companies",
+    "Policy & Tenders", "Insights", "Events", "SUBSCRIBE", "Subscribe",
+    "More about us", "Other corporate", "Company news",
+    "Products technology", "Products & Technology",
+    "Sign in", "Sign up", "Log in", "Register", "Search",
+    "Home", "About", "Contact", "Advertise", "Newsletter",
+    "Privacy Policy", "Terms of Use", "Cookie Policy",
+})
+
+# 正则模式：匹配复合导航路径或特定品牌格式
+_JUNK_TITLE_PATTERNS = [
+    re.compile(r"^首页\s*[>›/]"),            # "首页 > 光伏" 类面包屑
+    re.compile(r"^国际[\u4e00-\u9fff]{2,6}网$"),  # 国际XXX网 品牌名
+    re.compile(r"^(Advanced\s+search|Advanced Search)$", re.I),
+]
+
+
+def _is_junk_title(title: str) -> bool:
+    """
+    判断标题是否为导航栏目、品牌名、功能入口等非新闻内容。
+    返回 True 表示应丢弃。
+    """
+    t = title.strip()
+    if not t:
+        return True
+    # 极短标题：中文 ≤ 4 字或英文 ≤ 5 字，几乎不可能是真正的新闻标题
+    if len(t) <= 4:
+        return True
+    if t in _JUNK_TITLE_SET:
+        return True
+    for pat in _JUNK_TITLE_PATTERNS:
+        if pat.search(t):
+            return True
+    return False
+
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -50,10 +107,17 @@ def crawl_html(site: dict) -> list[dict]:
 
     logger.info("[%s] 抓取 HTML: %s", name, site["home_url"])
     try:
-        return fn(site)
+        articles = fn(site)
     except Exception as e:
         logger.error("[%s] HTML 抓取失败: %s", name, e)
         return []
+
+    before = len(articles)
+    articles = [a for a in articles if not _is_junk_title(a["title"])]
+    dropped = before - len(articles)
+    if dropped:
+        logger.info("[%s] 过滤掉 %d 条垃圾标题（导航/栏目名等）", name, dropped)
+    return articles
 
 
 # ── 通用工具 ────────────────────────────────────────────────
@@ -345,13 +409,17 @@ def crawl_inen_solar(site: dict) -> list[dict]:
     articles = []
     today_year = __import__("datetime").date.today().year
 
+    # 文章链接格式：/html/solar-XXXXXX.html
+    article_url_re = re.compile(r"/html/solar-\d+\.html$")
+
     for li in soup.find_all("li"):
         a = li.find("a", href=True)
         if not a:
             continue
         title = a.get_text(strip=True)
         href = urljoin(base, a["href"])
-        if not title or not href.startswith("http"):
+        # 只保留符合文章 URL 格式的链接，过滤首页/栏目/外站链接
+        if not article_url_re.search(href):
             continue
 
         date_tag = li.find(class_=re.compile(r"date|time", re.I))
@@ -383,11 +451,11 @@ def crawl_renewablesnow(site: dict) -> list[dict]:
     soup = _soup(resp)
     articles = []
 
+    # 文章链接必须在 /news/ 路径下，排除 /sectors/ /companies/ /events/ 等导航页
+    news_url_re = re.compile(r"renewablesnow\.com/news/[^/]+/?\s*$")
+
     for article in soup.find_all(["article", "div"], class_=re.compile(r"post|item|news", re.I)):
-        a = article.find("a", href=re.compile(r"renewablesnow\.com"))
-        if not a:
-            # 备选：找任意 <a>
-            a = article.find("a", href=True)
+        a = article.find("a", href=news_url_re)
         if not a:
             continue
 
