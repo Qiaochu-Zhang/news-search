@@ -1,322 +1,181 @@
-# �� 多源能源新闻抓取系统（简化版设计文档）
+# 多源能源新闻抓取系统（设计文档）
 
 ## 1. 项目目标
 
-构建一个轻量级新闻抓取脚本，每天运行一次，从多个能源/科技网站抓取新闻，并输出为 CSV 文件。
+构建一个轻量级新闻抓取系统，每天自动运行一次，从 26 个能源/科技网站抓取前一天新闻，输出为 CSV 文件并自动 push 到 git 仓库。
 
-抓取内容包括：
+抓取字段：
 
-* 标题
-* 来源站点
-* 分类
-* 发布时间（如有）
-* 原文链接
-* 正文（可选）
+| 字段 | 说明 |
+|------|------|
+| site | 站点名称 |
+| category | 新闻分类 |
+| title | 文章标题 |
+| url | 原文链接 |
+| publish_time | 发布时间（无法获取时为空） |
+| content | 正文（可选，默认跳过） |
 
-输出文件：
+输出文件：`daily-news/daily_news_YYYYMMDD.csv`（YYYYMMDD 为新闻日期，即昨天）
+
+---
+
+## 2. 总体架构
 
 ```
-outputs/daily_news_YYYYMMDD.csv
+GitHub Actions (每天 UTC 04:00 = 北京时间 12:00)
+    ↓
+python3 main.py --no-content
+    ↓
+读取 configs/sites.yaml
+    ↓
+遍历 26 个站点
+    ├── type=rss  → rss_spider.crawl_rss()     # 14 个站点
+    └── type=html → html_spider.crawl_html()   # 12 个站点
+    ↓
+is_yesterday() 过滤（publish_time 为空的也保留）
+    ↓
+写入 carbon_spider/outputs/daily_news_YYYYMMDD.csv
+    ↓
+cp 到 daily-news/
+    ↓
+git commit & push
 ```
 
----
-
-## 2. 总体策略（核心思路）
-
-系统采用**简单稳定优先策略**：
-
-> RSS优先 → HTML列表页补充 → newspaper3k提正文（可选）
-
-避免复杂工程（数据库 / Playwright / 分布式），确保：
-
-* 可快速上线
-* 易维护
-* 易扩展
+**核心策略：简单稳定优先。**RSS 优先，无 RSS 则抓 HTML 列表页。不用 Playwright、不用数据库、不用多线程，保证可维护性。
 
 ---
 
-## 3. 数据源类型
+## 3. 数据源策略
 
-### 3.1 RSS 源（优先）
+### 3.1 RSS 源（14 个，优先）
 
-适用于：
+- 使用 `feedparser` 解析，所有站点共用同一通用函数
+- 时间字段按优先级尝试：`published` → `updated` → `created` → `published_parsed`
+- `bozo=True`（非标准 XML）时记录警告但继续提取
 
-* 有 RSS feed 的网站
+**特殊处理：**
+- `h2_view`、`perovskite_info`：原站点有访问限制，改用 Google News RSS 聚合（`q=site:xxx.com`），有约 1-5 天延迟
 
-方式：
+### 3.2 HTML 列表页（12 个）
 
-* 使用 `feedparser` 抓取
+- 使用 `requests + BeautifulSoup`
+- 每站点一个 `@register("name")` 装饰的独立解析函数
+- `crawl_html()` 统一入口：分发 + 集中过滤垃圾标题
 
-优点：
+**各站点主要解析难点：**
 
-* 稳定
-* 结构化好
-* 开发成本低
-
-风险：
-
-* 部分站点可能被反爬（Cloudflare等）
-* RSS偶尔失效
-
----
-
-### 3.2 HTML 列表页
-
-适用于：
-
-* 无 RSS 的国内网站
-
-方式：
-
-* `requests + BeautifulSoup`
-
-提取内容：
-
-* 标题
-* URL
-* 时间（如果有）
-
-特点：
-
-* 每个网站需要单独解析规则
-* 但稳定性较高
+| 站点 | 难点 | 解法 |
+|------|------|------|
+| cpnn | 相对路径 `./YYYYMM/tID.html` | 用 `resp.url` 作 `urljoin` base |
+| sciencenet | 两类链接混杂（有无日期） | 只取相对路径链接，日期从父 `<tr>` 取 |
+| xinhua_tech | 日期不在文本 | 从 URL `/tech/YYYYMMDD/hash/c.html` 提取 |
+| inen_solar | 相对时间（X天前） | `now - timedelta(days=N)` 实时计算 |
+| renewablesnow | React 渲染，无 h 标签 | 标题从 `img alt` 提取 |
+| solarbe_tech | — | URL 格式 `/YYYYMM/DD/ID.html`，直接提取日期 |
+| tgs4c | 多个链接指向同一文章 | 过滤空文本和 "Read more" 链接 |
+| china_nengyuan | 列表页无日期 | pass-through（`is_yesterday(None)` = True） |
+| netease_pv | 桌面版 JS 渲染 | 改抓移动端 `m.163.com`，iPhone UA |
 
 ---
 
-## 4. 抓取流程
+## 4. 垃圾标题过滤
 
-### Step 1：读取 sites.yaml
+`crawl_html()` 在调用各站点解析函数后，统一过滤非新闻内容：
 
 ```python
-for site in sites:
-    if site.type == "rss":
-        crawl_rss(site)
-    else:
-        crawl_html(site)
+_JUNK_TITLE_SET      # 精确黑名单：导航词、品牌名、功能入口
+_JUNK_TITLE_PATTERNS # 正则：面包屑（首页 > X）、品牌名格式（国际XX网）
+# 最短长度 ≤ 4 字符直接丢弃
 ```
 
 ---
 
-### Step 2：抓取文章列表（Discovery）
+## 5. 日期过滤
 
-#### 4.1 RSS 抓取
-
-使用：
+目标：保留**前一天**（昨天）发布的文章。
 
 ```python
-feedparser.parse(site.rss_url)
+# utils/time_parser.py
+def is_yesterday(dt, today=None) -> bool:
+    if dt is None:
+        return True   # 无日期时宽松保留
+    return dt.date() == (today - timedelta(days=1)).date()
 ```
 
-提取字段：
-
-* title
-* link
-* published
-
-异常处理：
-
-* RSS失败 → fallback到HTML（可选）
+运行时以 UTC 时间计算昨日日期，与输出文件名保持一致。
 
 ---
 
-#### 4.2 HTML 抓取
+## 6. 自动化调度（GitHub Actions）
 
-使用：
+配置文件：`.github/workflows/daily_scrape.yml`
 
-```python
-requests + BeautifulSoup
+```yaml
+on:
+  schedule:
+    - cron: '0 4 * * *'   # UTC 04:00 = 北京时间 12:00
+  workflow_dispatch:        # 支持手动触发
 ```
 
-每个网站写独立函数，例如：
-
-```python
-def crawl_cnnpn():
-def crawl_cpnn():
-```
-
-提取：
-
-* title
-* url
-* publish_time（如有）
+执行步骤：
+1. Checkout 仓库
+2. 安装 Python 3.10 + 依赖
+3. `python3 main.py --no-content`
+4. 复制输出到 `daily-news/`
+5. `git commit && git push`（无新内容时跳过 commit）
 
 ---
 
-### Step 3：过滤“当天新闻”
-
-规则：
-
-```python
-if publish_date == today:
-    keep
-```
-
-特殊情况：
-
-* 如果没有时间 → 默认保留（避免漏抓）
-
----
-
-### Step 4：抓正文（可选）
-
-使用：
-
-```python
-from newspaper import Article
-```
-
-流程：
-
-```python
-article = Article(url)
-article.download()
-article.parse()
-content = article.text
-```
-
-异常处理：
-
-* 失败 → content 为空
-* 不影响整体流程
-
----
-
-### Step 5：写入 CSV
-
-使用：
-
-```python
-pandas.DataFrame.to_csv()
-```
-
-字段：
+## 7. 项目结构
 
 ```
-date
-site
-category
-title
-url
-publish_time
-content
+news-search/
+├── .github/workflows/daily_scrape.yml   # 定时任务
+├── carbon_spider/
+│   ├── configs/sites.yaml               # 26 个站点配置
+│   ├── spiders/
+│   │   ├── rss_spider.py
+│   │   └── html_spider.py
+│   ├── utils/time_parser.py
+│   ├── main.py
+│   └── requirements.txt
+├── daily-news/                          # 每日 CSV 归档
+└── docs/
+    ├── code_logic.md                    # 代码逻辑详解
+    └── fixes.md                         # 历次修复记录
 ```
 
 ---
 
-## 5. 项目结构
+## 8. 异常处理策略
 
-```
-carbon_spider/
-├── configs/
-│   └── sites.yaml
-├── spiders/
-│   ├── rss_spider.py
-│   ├── html_spider.py
-├── utils/
-│   ├── time_parser.py
-├── outputs/
-│   └── daily_news_YYYYMMDD.csv
-└── main.py
-```
+| 场景 | 处理方式 |
+|------|----------|
+| RSS 请求失败 | try/except，记录日志，返回空列表，不影响其他站点 |
+| HTML 解析失败 | 同上 |
+| 正文抓取失败 | content 置空，不影响整体流程 |
+| 无新文章（当日） | git diff 为空，跳过 commit |
+| 站点日期格式变化 | `publish_time=None`，宽松过滤保留文章 |
 
 ---
 
-## 6. sites.yaml 说明
+## 9. 不做的事情（当前阶段）
 
-每个站点定义：
-
-```
-name: 唯一标识
-category: 分类（电池/氢/光伏等）
-home_url: 网站入口
-rss_url: RSS地址（可选）
-type: rss 或 html
-```
+- Playwright（动态渲染，除非 requests 完全无法访问）
+- 数据库存储
+- 多线程/分布式
+- 复杂去重（同一 URL 只抓一次，当前通过 `seen` set 去重）
+- 登录抓取（WeChat 公众号等无法接入）
+- AI 摘要/分类
 
 ---
 
-## 7. 异常处理策略
+## 10. 扩展方式
 
-### 7.1 RSS失败
+**新增 RSS 站点**：`configs/sites.yaml` 加一条 `type: rss` 即可。
 
-处理方式：
+**新增 HTML 站点**：
+1. `sites.yaml` 加配置
+2. `html_spider.py` 写解析函数，用 `@register("name")` 注册
 
-* try/except
-* 记录日志
-* 可选 fallback 到 HTML
-
----
-
-### 7.2 HTML解析失败
-
-处理方式：
-
-* 跳过该站点
-* 不影响其他站点
-
----
-
-### 7.3 正文抓取失败
-
-处理方式：
-
-* content设为空
-* 记录失败即可
-
----
-
-## 8. 不做的事情（当前阶段）
-
-为了保持简单，本版本不做：
-
-* ❌ Playwright（动态渲染）
-* ❌ 数据库存储
-* ❌ 多线程/分布式
-* ❌ 复杂去重
-* ❌ 登录抓取
-* ❌ AI分类/分析
-
----
-
-## 9. 后续扩展方向（可选）
-
-当系统稳定后可以逐步增加：
-
-* 增加 Playwright（处理反爬）
-* 增加 SQLite/PostgreSQL
-* 增加去重逻辑
-* 增加自动摘要（LLM）
-* 增加定时任务（cron / EC2）
-
----
-
-## 10. 运行方式
-
-每日执行：
-
-```bash
-python main.py
-```
-
-输出：
-
-```
-outputs/daily_news_YYYYMMDD.csv
-```
-
----
-
-## 11. 核心设计原则
-
-1. 简单优先
-2. 能跑优先
-3. 出错不影响整体
-4. 每个站点独立处理
-5. 可逐步增强
-
----
-
-## 12. 一句话总结
-
-> 用最简单的方式，把几十个新闻源每天抓一遍，先跑起来，再逐步优化。
-
+**注意**：目前 `solarbe_tech`（约 100+ 篇/日）和 `china_nengyuan`（约 170 篇/日）产量较大，且 `china_nengyuan` 无日期过滤，如需精确过滤可在文章页提取日期。

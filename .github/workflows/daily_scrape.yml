@@ -1,0 +1,60 @@
+name: Daily News Scrape
+
+# 每天北京时间 12:00（UTC 04:00）自动抓取前一天新闻并 push
+on:
+  schedule:
+    - cron: '0 4 * * *'
+  workflow_dispatch:          # 允许手动触发，方便测试
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write         # 允许 push 到仓库
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r carbon_spider/requirements.txt
+
+      - name: Run scraper
+        run: |
+          cd carbon_spider
+          python3 main.py --no-content
+
+      - name: Copy output to daily-news/
+        run: |
+          cp carbon_spider/outputs/daily_news_*.csv daily-news/
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # 昨日日期（新闻日期，与输出文件名对齐）
+          DATE_DASH=$(date -u -d '1 day ago' +%Y-%m-%d)
+          DATE_NUM=$(date -u -d '1 day ago' +%Y%m%d)
+          CSV="daily-news/daily_news_${DATE_NUM}.csv"
+
+          # 统计文章数和来源数
+          COUNT=$(python3 -c "
+          import pandas as pd
+          df = pd.read_csv('${CSV}')
+          print(f'{len(df)} articles across {df[\"site\"].nunique()} sources')
+          " 2>/dev/null || echo "unknown count")
+
+          git add daily-news/
+          if git diff --cached --quiet; then
+            echo "No new articles to commit."
+          else
+            git commit -m "add daily news for ${DATE_DASH} (${COUNT})"
+            git push
+          fi
